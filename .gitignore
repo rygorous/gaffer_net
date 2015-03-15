@@ -1,0 +1,10 @@
+*.obj
+*.exe
+*.pdb
+*.bin
+*.sdf
+*.opensdf
+*.sln
+*.vcxproj*
+*.suo
+Debug
