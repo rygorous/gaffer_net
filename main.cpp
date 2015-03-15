@@ -239,10 +239,14 @@ struct ModelSet
     typedef BinShiftModel<5> DefaultBit;
     typedef BitTreeModel<DefaultBit, 8> DefaultByte;
 
+    DefaultBit orientation_different;
     BitTreeModel<DefaultBit, 2> orientation_largest;
     BitTreeModel<DefaultBit, 9> orientation_val;
+
+    DefaultBit pos_different;
     DefaultByte pos_xy[3]; // first, second, third byte
     DefaultByte pos_z[2]; // first, second byte
+
     DefaultBit interacting[2]; // [ref.interacting]
 };
 
@@ -258,9 +262,21 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
         CubeState *cube = &cur->cubes[i];
         CubeState const *refc = &ref->cubes[i];
 
-        m.orientation_largest.encode(coder, cube->orientation_largest);
-        for (int j = 0; j < 3; ++j)
-            m.orientation_val.encode(coder, (&cube->orientation_a)[j]);
+        if (cube->orientation_largest != refc->orientation_largest ||
+            cube->orientation_a != refc->orientation_a ||
+            cube->orientation_b != refc->orientation_b ||
+            cube->orientation_c != refc->orientation_c)
+        {
+            m.orientation_different.encode(coder, 1);
+            m.orientation_largest.encode(coder, cube->orientation_largest);
+            for (int j = 0; j < 3; ++j)
+                m.orientation_val.encode(coder, (&cube->orientation_a)[j]);
+        }
+        else
+        {
+            m.orientation_different.encode(coder, 0);
+        }
+
         for (int j = 0; j < 2; ++j)
         {
             int p = (&cube->position_x)[j];
@@ -288,9 +304,19 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         CubeState *cube = &cur->cubes[i];
         CubeState const *refc = &ref->cubes[i];
 
-        cube->orientation_largest = m.orientation_largest.decode(coder);
-        for (int j = 0; j < 3; ++j)
-            (&cube->orientation_a)[j] = m.orientation_val.decode(coder);
+        if (m.orientation_different.decode(coder))
+        {
+            cube->orientation_largest = m.orientation_largest.decode(coder);
+            for (int j = 0; j < 3; ++j)
+                (&cube->orientation_a)[j] = m.orientation_val.decode(coder);
+        }
+        else
+        {
+            cube->orientation_largest = refc->orientation_largest;
+            cube->orientation_a = refc->orientation_a;
+            cube->orientation_b = refc->orientation_b;
+            cube->orientation_c = refc->orientation_c;
+        }
 
         for (int j = 0; j < 2; ++j)
         {
