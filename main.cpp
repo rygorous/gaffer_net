@@ -216,6 +216,7 @@ static const int kNumCubes = 901;
 static const int kNumFrames = 2593;
 
 static const int kRefDist = 6; // distance to reference frame
+static const int kFrameRate = 60; // just used to calc kbps
 
 struct CubeState
 {
@@ -445,7 +446,12 @@ int main()
     }
 
     printf("total packed size %d\n", (int)packet_size_sum);
-    printf("%.2f bytes/frame\n", (double)packet_size_sum / (double)kNumFrames);
+
+    double bytes_per_frame = (double)packet_size_sum / (double)kNumFrames;
+    double kbps = bytes_per_frame * kFrameRate * 8.0 / 1000.0;
+
+    printf("%.2f bytes/frame\n", bytes_per_frame);
+    printf("%.2f kbps\n", kbps);
 
     // Write output
     write_data("output.bin", frames, kNumFrames);
