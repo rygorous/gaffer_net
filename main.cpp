@@ -338,7 +338,6 @@ struct Frame
 struct ModelSet
 {
     typedef BinShiftModel<5> DefaultBit;
-    typedef BitTreeModel<DefaultBit, 8> DefaultByte;
     typedef SExpGolombModel<DefaultBit, DefaultBit, DefaultBit> SExpGolomb;
 
     DefaultBit orientation_different;
@@ -352,8 +351,6 @@ struct ModelSet
 
     DefaultBit interacting[2]; // [ref.interacting]
 };
-
-typedef BitTreeModel<BinShiftModel<5>, 8> ByteModel;
 
 static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
 {
