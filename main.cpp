@@ -234,37 +234,79 @@ struct Frame
     CubeState cubes[kNumCubes];
 };
 
+struct ModelSet
+{
+    typedef BinShiftModel<5> DefaultBit;
+    typedef BitTreeModel<DefaultBit, 8> DefaultByte;
+
+    BitTreeModel<DefaultBit, 2> orientation_largest;
+    BitTreeModel<DefaultBit, 9> orientation_val;
+    DefaultByte pos_xy[3]; // first, second, third byte
+    DefaultByte pos_z[2]; // first, second byte
+    DefaultBit interacting;
+};
+
 typedef BitTreeModel<BinShiftModel<5>, 8> ByteModel;
 
 static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
 {
     BinArithEncoder coder(dest);
-
-    // let's keep it real simple for starters, just to have something running
-    ByteModel models[sizeof(CubeState)];
+    ModelSet m;
 
     for (int i = 0; i < kNumCubes; ++i)
     {
         CubeState *cube = &cur->cubes[i];
-        uint8_t *cube_bytes = (uint8_t *)cube;
 
-        for (size_t j = 0; j < sizeof(CubeState); ++j)
-            models[j].encode(coder, cube_bytes[j]);
+        m.orientation_largest.encode(coder, cube->orientation_largest);
+        for (int j = 0; j < 3; ++j)
+            m.orientation_val.encode(coder, (&cube->orientation_a)[j]);
+        for (int j = 0; j < 2; ++j)
+        {
+            int p = (&cube->position_x)[j];
+            m.pos_xy[0].encode(coder, (p >>  0) & 0xff);
+            m.pos_xy[1].encode(coder, (p >>  8) & 0xff);
+            m.pos_xy[2].encode(coder, (p >> 16) & 0xff);
+        }
+        {
+            int p = cube->position_z;
+            m.pos_z[0].encode(coder, (p >> 0) & 0xff);
+            m.pos_z[1].encode(coder, (p >> 8) & 0xff);
+        }
+
+        m.interacting.encode(coder, cube->interacting);
     }
 }
 
 static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
 {
     BinArithDecoder coder(src);
-    ByteModel models[sizeof(CubeState)];
+    ModelSet m;
 
     for (int i = 0; i < kNumCubes; ++i)
     {
         CubeState *cube = &cur->cubes[i];
-        uint8_t *cube_bytes = (uint8_t *)cube;
 
-        for (size_t j = 0; j < sizeof(CubeState); ++j)
-            cube_bytes[j] = models[j].decode(coder);
+        cube->orientation_largest = m.orientation_largest.decode(coder);
+        for (int j = 0; j < 3; ++j)
+            (&cube->orientation_a)[j] = m.orientation_val.decode(coder);
+
+        for (int j = 0; j < 2; ++j)
+        {
+            int p = 0;
+            p |= m.pos_xy[0].decode(coder) <<  0;
+            p |= m.pos_xy[1].decode(coder) <<  8;
+            p |= m.pos_xy[2].decode(coder) << 16;
+            // sign extend
+            (&cube->position_x)[j] = (int) (((int32_t) (p << 8)) >> 8);
+        }
+        {
+            int p = 0;
+            p |= m.pos_z[0].decode(coder) << 0;
+            p |= m.pos_z[1].decode(coder) << 8;
+            cube->position_z = p;
+        }
+
+        cube->interacting = m.interacting.decode(coder);
     }
 }
 
