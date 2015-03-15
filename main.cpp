@@ -313,7 +313,6 @@ struct SExpGolombModel
 // ---- Data format
 
 static const int kNumCubes = 901;
-static const int kNumFrames = 2593;
 
 static const int kRefDist = 6; // distance to reference frame
 static const int kFrameRate = 60; // just used to calc kbps
@@ -462,7 +461,7 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
 
 // ---- I/O and main
 
-static void read_data(char const *filename, Frame *frames, int num_frames)
+static Frame *read_data(char const *filename, int &num_frames)
 {
     CubeState dummy;
 
@@ -472,6 +471,12 @@ static void read_data(char const *filename, Frame *frames, int num_frames)
         printf("data missing!\n");
         exit(1);
     }
+
+    fseek(f, 0, SEEK_END);
+    num_frames = ftell(f) / (kNumCubes * 2 * sizeof(CubeState));
+    fseek(f, 0, SEEK_SET);
+
+    Frame *frames = new Frame[num_frames];
 
     for (int frame = 0; frame < num_frames; ++frame)
     {
@@ -485,7 +490,9 @@ static void read_data(char const *filename, Frame *frames, int num_frames)
             fread(&dummy, sizeof(CubeState), 1, f); // skip ref CubeState
         }
     }
+
     fclose(f);
+    return frames;
 }
 
 static void write_data(char const *filename, Frame *frames, int num_frames)
@@ -522,9 +529,9 @@ int main()
     memset(null_frame.cubes, 0, sizeof(null_frame.cubes));
 
     // Read the data
-    Frame *frames = new Frame[kNumFrames];
     printf("reading...\n");
-    read_data("delta_data.bin", frames, kNumFrames);
+    int num_frames;
+    Frame *frames = read_data("delta_data.bin", num_frames);
     printf("done.\n");
 
     // Coding loop
@@ -533,7 +540,7 @@ int main()
     size_t packet_size_sum = 0;
     Frame out;
 
-    for (int frame = 0; frame < kNumFrames; ++frame)
+    for (int frame = 0; frame < num_frames; ++frame)
     {
         Frame *cur = &frames[frame];
         Frame *ref = (frame >= kRefDist) ? &frames[frame - kRefDist] : &null_frame;
@@ -553,14 +560,14 @@ int main()
 
     printf("total packed size %d\n", (int)packet_size_sum);
 
-    double bytes_per_frame = (double)packet_size_sum / (double)kNumFrames;
+    double bytes_per_frame = (double)packet_size_sum / (double)num_frames;
     double kbps = bytes_per_frame * kFrameRate * 8.0 / 1000.0;
 
     printf("%.2f bytes/frame\n", bytes_per_frame);
     printf("%.2f kbps\n", kbps);
 
     // Write output
-    write_data("output.bin", frames, kNumFrames);
+    write_data("output.bin", frames, num_frames);
 
     // Clean up
     delete[] frames;
