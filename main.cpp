@@ -347,8 +347,8 @@ struct ModelSet
     BitTreeModel<DefaultBit, 9> orientation_val;
 
     DefaultBit pos_different;
-    DefaultByte pos_xy[3]; // first, second, third byte
-    DefaultByte pos_z[2]; // first, second byte
+    SExpGolomb pos_xy;
+    SExpGolomb pos_z;
 
     DefaultBit interacting[2]; // [ref.interacting]
 };
@@ -388,23 +388,15 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
         else
             m.orientation_different.encode(coder, 0);
 
-        if (cube->position_x != refc->position_x ||
-            cube->position_y != refc->position_y ||
-            cube->position_z != refc->position_z)
+        int dx = cube->position_x - refc->position_x;
+        int dy = cube->position_y - refc->position_y;
+        int dz = cube->position_z - refc->position_z;
+        if (dx || dy || dz)
         {
             m.pos_different.encode(coder, 1);
-            for (int j = 0; j < 2; ++j)
-            {
-                int p = (&cube->position_x)[j];
-                m.pos_xy[0].encode(coder, (p >>  0) & 0xff);
-                m.pos_xy[1].encode(coder, (p >>  8) & 0xff);
-                m.pos_xy[2].encode(coder, (p >> 16) & 0xff);
-            }
-            {
-                int p = cube->position_z;
-                m.pos_z[0].encode(coder, (p >> 0) & 0xff);
-                m.pos_z[1].encode(coder, (p >> 8) & 0xff);
-            }
+            m.pos_xy.encode(coder, dx);
+            m.pos_xy.encode(coder, dy);
+            m.pos_z.encode(coder, dx);
         }
         else
             m.pos_different.encode(coder, 0);
@@ -447,30 +439,18 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
             cube->orientation_c = refc->orientation_c;
         }
 
+        int dx = 0, dy = 0, dz = 0;
+
         if (m.pos_different.decode(coder))
         {
-            for (int j = 0; j < 2; ++j)
-            {
-                int p = 0;
-                p |= m.pos_xy[0].decode(coder) <<  0;
-                p |= m.pos_xy[1].decode(coder) <<  8;
-                p |= m.pos_xy[2].decode(coder) << 16;
-                // sign extend
-                (&cube->position_x)[j] = (int) (((int32_t) (p << 8)) >> 8);
-            }
-            {
-                int p = 0;
-                p |= m.pos_z[0].decode(coder) << 0;
-                p |= m.pos_z[1].decode(coder) << 8;
-                cube->position_z = p;
-            }
+            dx = m.pos_xy.decode(coder);
+            dy = m.pos_xy.decode(coder);
+            dz = m.pos_z.decode(coder);
         }
-        else
-        {
-            cube->position_x = refc->position_x;
-            cube->position_y = refc->position_y;
-            cube->position_z = refc->position_z;
-        }
+
+        cube->position_x = refc->position_x + dx;
+        cube->position_y = refc->position_y + dy;
+        cube->position_z = refc->position_z + dz;
 
         cube->interacting = m.interacting[refc->interacting].decode(coder);
     }
