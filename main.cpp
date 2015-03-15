@@ -350,7 +350,7 @@ struct ModelSet
 struct Frame
 {
     CubeState cubes[kNumCubes];
-    ModelSet models;
+    ModelSet models; // coding state
 };
 
 static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
@@ -466,7 +466,7 @@ static void read_data(char const *filename, Frame *frames, int num_frames)
 {
     CubeState dummy;
 
-    FILE *f = fopen("delta_data.bin", "rb");
+    FILE *f = fopen(filename, "rb");
     if (!f)
     {
         printf("data missing!\n");
