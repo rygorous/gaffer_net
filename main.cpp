@@ -330,11 +330,6 @@ struct CubeState
     int interacting;
 };
 
-struct Frame
-{
-    CubeState cubes[kNumCubes];
-};
-
 struct ModelSet
 {
     typedef BinShiftModel<5> DefaultBit;
@@ -352,10 +347,19 @@ struct ModelSet
     DefaultBit interacting[2]; // [ref.interacting]
 };
 
+struct Frame
+{
+    CubeState cubes[kNumCubes];
+    ModelSet models;
+};
+
 static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
 {
     BinArithEncoder coder(dest);
-    ModelSet m;
+    ModelSet &m = cur->models;
+
+    // Start with ref frame models
+    m = ref->models;
 
     for (int i = 0; i < kNumCubes; ++i)
     {
@@ -405,7 +409,10 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
 static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
 {
     BinArithDecoder coder(src);
-    ModelSet m;
+    ModelSet &m = cur->models;
+
+    // Start with ref frame models
+    m = ref->models;
 
     for (int i = 0; i < kNumCubes; ++i)
     {
@@ -512,7 +519,7 @@ static void write_data(char const *filename, Frame *frames, int num_frames)
 int main()
 {
     Frame null_frame;
-    memset(&null_frame, 0, sizeof(null_frame));
+    memset(null_frame.cubes, 0, sizeof(null_frame.cubes));
 
     // Read the data
     Frame *frames = new Frame[kNumFrames];
