@@ -243,7 +243,7 @@ struct ModelSet
     BitTreeModel<DefaultBit, 9> orientation_val;
     DefaultByte pos_xy[3]; // first, second, third byte
     DefaultByte pos_z[2]; // first, second byte
-    DefaultBit interacting;
+    DefaultBit interacting[2]; // [ref.interacting]
 };
 
 typedef BitTreeModel<BinShiftModel<5>, 8> ByteModel;
@@ -256,6 +256,7 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
     for (int i = 0; i < kNumCubes; ++i)
     {
         CubeState *cube = &cur->cubes[i];
+        CubeState const *refc = &ref->cubes[i];
 
         m.orientation_largest.encode(coder, cube->orientation_largest);
         for (int j = 0; j < 3; ++j)
@@ -273,7 +274,7 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
             m.pos_z[1].encode(coder, (p >> 8) & 0xff);
         }
 
-        m.interacting.encode(coder, cube->interacting);
+        m.interacting[refc->interacting].encode(coder, cube->interacting);
     }
 }
 
@@ -285,6 +286,7 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
     for (int i = 0; i < kNumCubes; ++i)
     {
         CubeState *cube = &cur->cubes[i];
+        CubeState const *refc = &ref->cubes[i];
 
         cube->orientation_largest = m.orientation_largest.decode(coder);
         for (int j = 0; j < 3; ++j)
@@ -306,7 +308,7 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
             cube->position_z = p;
         }
 
-        cube->interacting = m.interacting.decode(coder);
+        cube->interacting = m.interacting[refc->interacting].decode(coder);
     }
 }
 
