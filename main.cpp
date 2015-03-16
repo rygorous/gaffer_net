@@ -339,7 +339,7 @@ struct ModelSet
     typedef SExpGolombModel<DefaultBit, DefaultBit, DefaultBit> SExpGolomb;
 
     DefaultBit orientation_different;
-    BitTreeModel<DefaultBit, 2> orientation_largest;
+    BitTreeModel<DefaultBit, 2> orientation_largest[4]; // [ref.orientation_largest]
     SExpGolomb orientation_delta;
     BitTreeModel<DefaultBit, 9> orientation_val;
 
@@ -378,7 +378,7 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
         {
             diff_orient = true;
             m.orientation_different.encode(coder, 1);
-            m.orientation_largest.encode(coder, cube->orientation_largest);
+            m.orientation_largest[refc->orientation_largest].encode(coder, cube->orientation_largest);
             if (cube->orientation_largest == refc->orientation_largest)
             {
                 m.orientation_delta.encode(coder, cube->orientation_a - refc->orientation_a);
@@ -429,7 +429,7 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         if (m.orientation_different.decode(coder))
         {
             diff_orient = true;
-            cube->orientation_largest = m.orientation_largest.decode(coder);
+            cube->orientation_largest = m.orientation_largest[refc->orientation_largest].decode(coder);
             if (cube->orientation_largest == refc->orientation_largest)
             {
                 cube->orientation_a = refc->orientation_a + m.orientation_delta.decode(coder);
