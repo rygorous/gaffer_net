@@ -333,6 +333,7 @@ struct CubeState
 
 struct PredState
 {
+    int changing;
     int vel_x;
     int vel_y;
     int vel_z;
@@ -343,7 +344,7 @@ struct ModelSet
     typedef BinShiftModel<5> DefaultBit;
     typedef SExpGolombModel<DefaultBit, DefaultBit, DefaultBit> SExpGolomb;
 
-    DefaultBit orientation_different;
+    DefaultBit orientation_different[2]; // [refp.changing]
     BitTreeModel<DefaultBit, 2> orientation_largest[4]; // [ref.orientation_largest]
     SExpGolomb orientation_delta;
     BitTreeModel<DefaultBit, 9> orientation_val;
@@ -393,7 +394,7 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
             cube->orientation_c != refc->orientation_c)
         {
             diff_orient = true;
-            m.orientation_different.encode(coder, 1);
+            m.orientation_different[refp->changing].encode(coder, 1);
             m.orientation_largest[refc->orientation_largest].encode(coder, cube->orientation_largest);
             if (cube->orientation_largest == refc->orientation_largest)
             {
@@ -409,7 +410,7 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
             }
         }
         else
-            m.orientation_different.encode(coder, 0);
+            m.orientation_different[refp->changing].encode(coder, 0);
 
         int dx = cube->position_x - refc->position_x;
         int dy = cube->position_y - refc->position_y;
@@ -430,6 +431,7 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
         pred->vel_x = dx;
         pred->vel_y = dy;
         pred->vel_z = dz;
+        pred->changing = (int(diff_orient) | dx | dy | dz) != 0;
 
         m.interacting[refc->interacting].encode(coder, cube->interacting);
     }
@@ -451,7 +453,7 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         PredState const *refp = &ref->pred[i];
         bool diff_orient = false;
 
-        if (m.orientation_different.decode(coder))
+        if (m.orientation_different[refp->changing].decode(coder))
         {
             diff_orient = true;
             cube->orientation_largest = m.orientation_largest[refc->orientation_largest].decode(coder);
@@ -490,6 +492,7 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         pred->vel_x = dx;
         pred->vel_y = dy;
         pred->vel_z = dz;
+        pred->changing = (int(diff_orient) | dx | dy | dz) != 0;
 
         cube->interacting = m.interacting[refc->interacting].decode(coder);
     }
