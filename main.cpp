@@ -1,4 +1,4 @@
-#define CHECK_RESULTS
+//#define CHECK_RESULTS
 
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
@@ -285,18 +285,17 @@ struct UExpGolombModel
 };
 
 // Signed exponential Golomb-style model.
-template<typename MagModel, typename ValModel, typename SignModel>
+template<typename MagModel, typename ValModel>
 struct SExpGolombModel
 {
     UExpGolombModel<MagModel, ValModel> abs_coder;
-    SignModel sign;
 
     void encode(BinArithEncoder &enc, int32_t value)
     {
         uint32_t absv = (value < 0) ? -value : value;
         abs_coder.encode(enc, absv);
         if (absv)
-            sign.encode(enc, value < 0);
+            enc.encode(value < 0, kProbMax / 2);
     }
 
     int32_t decode(BinArithDecoder &dec)
@@ -304,7 +303,7 @@ struct SExpGolombModel
         int32_t v = abs_coder.decode(dec);
         if (v)
         {
-            if (sign.decode(dec))
+            if (dec.decode(kProbMax / 2))
                 v = -v;
         }
 
@@ -331,6 +330,8 @@ struct CubeState
     int interacting;
 };
 
+// Prediction state. Not sent in the stream; inferred from the data
+// sent to aid coding.
 struct PredState
 {
     int changing;
@@ -342,7 +343,7 @@ struct PredState
 struct ModelSet
 {
     typedef BinShiftModel<5> DefaultBit;
-    typedef SExpGolombModel<DefaultBit, DefaultBit, DefaultBit> SExpGolomb;
+    typedef SExpGolombModel<DefaultBit, DefaultBit> SExpGolomb;
 
     DefaultBit orientation_different[2]; // [refp.changing]
     BitTreeModel<DefaultBit, 2> orientation_largest[4]; // [ref.orientation_largest]
@@ -481,9 +482,11 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         int dx = 0, dy = 0, dz = 0;
         if (m.pos_different[diff_orient].decode(coder))
         {
+#if 0
             dx = refp->vel_x + m.pos_xy.decode(coder);
             dy = refp->vel_y + m.pos_xy.decode(coder);
             dz = refp->vel_z + m.pos_z.decode(coder);
+#endif
         }
 
         cube->position_x = refc->position_x + dx;
