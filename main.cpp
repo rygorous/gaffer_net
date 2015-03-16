@@ -75,11 +75,19 @@ class BinArithDecoder
 {
     uint32_t code, lo, hi;
     ByteVec const &bytes;
-    size_t read_pos;
+    size_t read_pos, size;
 
     // noncopyable
     BinArithDecoder(BinArithDecoder const &);
     BinArithDecoder &operator =(BinArithDecoder const &);
+
+    uint8_t getb()
+    {
+        if (read_pos < size)
+            return bytes[read_pos++];
+        else
+            return 0;
+    }
 
 public:
     // Start decoding
@@ -87,8 +95,9 @@ public:
         : lo(0), hi(~0u), bytes(source), read_pos(0)
     {
         code = 0;
+        size = source.size();
         for (int i = 0; i < 4; ++i)
-            code = (code << 8) | bytes[read_pos++];
+            code = (code << 8) | getb();
     }
 
     // Decode a binary symbol with the probability of a 1 being "prob".
@@ -113,7 +122,7 @@ public:
         // Renormalize
         while ((lo ^ hi) < (1u << 24))
         {
-            code = (code << 8) | bytes[read_pos++];
+            code = (code << 8) | getb();
             lo <<= 8;
             hi = (hi << 8) | 0xff;
         }
@@ -214,9 +223,9 @@ struct BitTreeModel
 template<typename MagModel, typename ValModel>
 struct UExpGolombModel
 {
-    static const uint32_t kTopBits = 4;
+    static const uint32_t kTopBits = 2;
 
-    MagModel mag[33];
+    BitTreeModel<MagModel, 5> mag;
     ValModel top[(1 << kTopBits) - 1];
 
     void encode(BinArithEncoder &enc, uint32_t value)
@@ -228,11 +237,8 @@ struct UExpGolombModel
         // bitscan is the better way to do this.
         uint32_t m = 0;
         while (value >= (2u << m))
-        {
-            mag[m].encode(enc, 1);
             ++m;
-        }
-        mag[m].encode(enc, 0);
+        mag.encode(enc, m);
 
         // send remaining bits MSB->LSB
         uint32_t mask = m ? 1u << (m - 1) : 0;
@@ -258,10 +264,8 @@ struct UExpGolombModel
 
     uint32_t decode(BinArithDecoder &dec)
     {
-        // decode unary magnitude code
-        uint32_t m = 0;
-        while (mag[m].decode(dec))
-            ++m;
+        // decode magnitude code
+        uint32_t m = mag.decode(dec);
 
         // decode value bits
         uint32_t v = 1;
@@ -443,7 +447,6 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         }
 
         int dx = 0, dy = 0, dz = 0;
-
         if (m.pos_different.decode(coder))
         {
             dx = m.pos_xy.decode(coder);
