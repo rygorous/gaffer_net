@@ -11,7 +11,7 @@
 
 // Probabilities are expressed in fixed point, with kProbBits bits of
 // resolution. No need to go overboard with this.
-static int const kProbBits = 12;
+static int const kProbBits = 15;
 static uint32_t const kProbMax = 1u << kProbBits;
 
 // Type used for buffers.
