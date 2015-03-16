@@ -564,9 +564,11 @@ int main()
     ByteVec packet_buf;
 
     size_t packet_size_sum = 0;
+    size_t packet_count = 0;
     Frame out;
 
-    for (int frame = 0; frame < num_frames; ++frame)
+    // Gaffer says skip the first 6 frames. Okay.
+    for (int frame = 6; frame < num_frames; ++frame)
     {
         Frame *cur = &frames[frame];
         Frame *ref = (frame >= kRefDist) ? &frames[frame - kRefDist] : &initial_frame;
@@ -584,11 +586,12 @@ int main()
 #endif
 
         packet_size_sum += packet_buf.size();
+        ++packet_count;
     }
 
     printf("total packed size %d\n", (int)packet_size_sum);
 
-    double bytes_per_frame = (double)packet_size_sum / (double)num_frames;
+    double bytes_per_frame = (double)packet_size_sum / (double)packet_count;
     double kbps = bytes_per_frame * kFrameRate * 8.0 / 1000.0;
 
     printf("%.2f bytes/frame\n", bytes_per_frame);
