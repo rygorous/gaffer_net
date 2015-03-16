@@ -248,7 +248,7 @@ struct UExpGolombModel
     uint32_t decode(BinArithDecoder &dec)
     {
         // decode magnitude code
-        uint32_t m = mag.decode(dec);
+        uint32_t m = (uint32_t) mag.decode(dec);
 
         // decode value bits
         uint32_t v = 1;
@@ -355,8 +355,6 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
     // Start with ref frame models
     m = ref->models;
 
-    int bias_z = 0;
-
     for (int i = 0; i < kNumCubes; ++i)
     {
         CubeState *cube = &cur->cubes[i];
@@ -376,9 +374,13 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
             m.orientation_largest[refc->orientation_largest].encode(coder, cube->orientation_largest);
             if (cube->orientation_largest == refc->orientation_largest)
             {
-                m.orientation_delta.encode(coder, cube->orientation_a - refc->orientation_a);
-                m.orientation_delta.encode(coder, cube->orientation_b - refc->orientation_b);
-                m.orientation_delta.encode(coder, cube->orientation_c - refc->orientation_c);
+                int da = cube->orientation_a - refc->orientation_a;
+                int db = cube->orientation_b - refc->orientation_b;
+                int dc = cube->orientation_c - refc->orientation_c;
+
+                m.orientation_delta.encode(coder, da);
+                m.orientation_delta.encode(coder, db);
+                m.orientation_delta.encode(coder, dc);
             }
             else
             {
@@ -434,7 +436,7 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         if (m.orientation_different[refp->changing].decode(coder))
         {
             diff_orient = true;
-            cube->orientation_largest = m.orientation_largest[refc->orientation_largest].decode(coder);
+            cube->orientation_largest = (int) m.orientation_largest[refc->orientation_largest].decode(coder);
             if (cube->orientation_largest == refc->orientation_largest)
             {
                 cube->orientation_a = refc->orientation_a + m.orientation_delta.decode(coder);
@@ -515,7 +517,7 @@ static Frame *read_data(char const *filename, int &num_frames, Frame *initial)
 
 static void write_data(char const *filename, Frame *frames, int num_frames, Frame const *initial)
 {
-    FILE *f = fopen("output.bin", "wb");
+    FILE *f = fopen(filename, "wb");
     if (!f)
     {
         printf("error writing output!\n");
