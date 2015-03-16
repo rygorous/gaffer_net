@@ -1,4 +1,4 @@
-#define CHECK_RESULTS
+//#define CHECK_RESULTS
 
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
@@ -218,13 +218,10 @@ struct BitTreeModel
 };
 
 // Unsigned exponential Golomb-style model.
-template<typename MagModel, typename ValModel>
+template<typename MagModel>
 struct UExpGolombModel
 {
-    static const uint32_t kTopBits = 2;
-
     BitTreeModel<MagModel, 5> mag;
-    ValModel top[(1 << kTopBits) - 1];
 
     void encode(BinArithEncoder &enc, uint32_t value)
     {
@@ -238,20 +235,8 @@ struct UExpGolombModel
             ++m;
         mag.encode(enc, m);
 
-        // send remaining bits MSB->LSB
+        // send remaining bits flat, MSB->LSB
         uint32_t mask = m ? 1u << (m - 1) : 0;
-        uint32_t ctx = 1;
-
-        // top bits use a real model
-        while (mask && ctx < (1 << kTopBits))
-        {
-            uint32_t bit = (value & mask) != 0;
-            top[ctx - 1].encode(enc, bit);
-            mask >>= 1;
-            ctx += ctx + bit;
-        }
-
-        // bottom bits are just flat
         while (mask)
         {
             uint32_t bit = (value & mask) != 0;
@@ -267,17 +252,7 @@ struct UExpGolombModel
 
         // decode value bits
         uint32_t v = 1;
-        uint32_t nleft = m;
-
-        // top first
-        while (nleft && v < (1u << kTopBits))
-        {
-            v += v + top[v - 1].decode(dec);
-            --nleft;
-        }
-
-        // remaining bits, if any
-        while (nleft--)
+        for (uint32_t i = 0; i < m; ++i)
             v += v + dec.decode(kProbMax / 2);
 
         return v - 1;
@@ -285,10 +260,10 @@ struct UExpGolombModel
 };
 
 // Signed exponential Golomb-style model.
-template<typename MagModel, typename ValModel>
+template<typename MagModel>
 struct SExpGolombModel
 {
-    UExpGolombModel<MagModel, ValModel> abs_coder;
+    UExpGolombModel<MagModel> abs_coder;
 
     void encode(BinArithEncoder &enc, int32_t value)
     {
@@ -343,7 +318,7 @@ struct PredState
 struct ModelSet
 {
     typedef BinShiftModel<5> DefaultBit;
-    typedef SExpGolombModel<DefaultBit, DefaultBit> SExpGolomb;
+    typedef SExpGolombModel<DefaultBit> SExpGolomb;
 
     DefaultBit orientation_different[2]; // [refp.changing]
     BitTreeModel<DefaultBit, 2> orientation_largest[4]; // [ref.orientation_largest]
@@ -379,6 +354,8 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
 
     // Start with ref frame models
     m = ref->models;
+
+    int bias_z = 0;
 
     for (int i = 0; i < kNumCubes; ++i)
     {
@@ -426,6 +403,8 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
         else
             m.pos_different[diff_orient].encode(coder, 0);
 
+        m.interacting[refc->interacting].encode(coder, cube->interacting);
+
         // NOTE: in general, we would need to account for variable frame
         // spacing here. But in this testbed we always predict from 6 frames
         // ago.
@@ -433,8 +412,6 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
         pred->vel_y = dy;
         pred->vel_z = dz;
         pred->changing = (int(diff_orient) | dx | dy | dz) != 0;
-
-        m.interacting[refc->interacting].encode(coder, cube->interacting);
     }
 }
 
@@ -490,12 +467,12 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         cube->position_x = refc->position_x + dx;
         cube->position_y = refc->position_y + dy;
         cube->position_z = refc->position_z + dz;
+        cube->interacting = m.interacting[refc->interacting].decode(coder);
+
         pred->vel_x = dx;
         pred->vel_y = dy;
         pred->vel_z = dz;
         pred->changing = (int(diff_orient) | dx | dy | dz) != 0;
-
-        cube->interacting = m.interacting[refc->interacting].decode(coder);
     }
 }
 
