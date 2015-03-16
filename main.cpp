@@ -1,4 +1,4 @@
-//#define CHECK_RESULTS
+#define CHECK_RESULTS
 
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
@@ -38,7 +38,25 @@ public:
     // Finish encoding - flushes remaining codeword
     ~BinArithEncoder()
     {
-        for (int i = 0; i < 4; ++i)
+        // Find shortest encoding that still decodes to the right symbols.
+        // The decoder implicitly zero-pads w
+        uint32_t round_up = 0xffffffu;
+        while (round_up)
+        {
+            if ((lo | round_up) != ~0u)
+            {
+                uint32_t rounded = (lo + round_up) & ~round_up;
+                if (rounded <= hi) // inside interval, we're good!
+                {
+                    lo = rounded;
+                    break;
+                }
+            }
+
+            round_up >>= 8;
+        }
+
+        while (lo)
         {
             bytes.push_back(lo >> 24);
             lo <<= 8;
