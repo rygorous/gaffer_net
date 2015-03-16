@@ -323,7 +323,7 @@ struct ModelSet
     DefaultBit orientation_different[2]; // [refp.changing]
     BitTreeModel<DefaultBit, 2> orientation_largest[4]; // [ref.orientation_largest]
     SExpGolomb orientation_delta;
-    BitTreeModel<DefaultBit, 9> orientation_val;
+    SExpGolomb orientation_val;
 
     DefaultBit pos_different[2]; // [orientation_differs]
     SExpGolomb pos_xy;
@@ -382,9 +382,9 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
             }
             else
             {
-                m.orientation_val.encode(coder, cube->orientation_a);
-                m.orientation_val.encode(coder, cube->orientation_b);
-                m.orientation_val.encode(coder, cube->orientation_c);
+                m.orientation_val.encode(coder, cube->orientation_a - 256);
+                m.orientation_val.encode(coder, cube->orientation_b - 256);
+                m.orientation_val.encode(coder, cube->orientation_c - 256);
             }
         }
         else
@@ -443,9 +443,9 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
             }
             else
             {
-                cube->orientation_a = m.orientation_val.decode(coder);
-                cube->orientation_b = m.orientation_val.decode(coder);
-                cube->orientation_c = m.orientation_val.decode(coder);
+                cube->orientation_a = m.orientation_val.decode(coder) + 256;
+                cube->orientation_b = m.orientation_val.decode(coder) + 256;
+                cube->orientation_c = m.orientation_val.decode(coder) + 256;
             }
         }
         else
