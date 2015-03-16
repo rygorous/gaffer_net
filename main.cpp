@@ -1,4 +1,4 @@
-//#define CHECK_RESULTS
+#define CHECK_RESULTS
 
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
@@ -482,11 +482,9 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         int dx = 0, dy = 0, dz = 0;
         if (m.pos_different[diff_orient].decode(coder))
         {
-#if 0
             dx = refp->vel_x + m.pos_xy.decode(coder);
             dy = refp->vel_y + m.pos_xy.decode(coder);
             dz = refp->vel_z + m.pos_z.decode(coder);
-#endif
         }
 
         cube->position_x = refc->position_x + dx;
