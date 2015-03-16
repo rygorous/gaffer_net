@@ -463,8 +463,6 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
 
 static Frame *read_data(char const *filename, int &num_frames, Frame *initial)
 {
-    CubeState dummy;
-
     FILE *f = fopen(filename, "rb");
     if (!f)
     {
@@ -473,26 +471,24 @@ static Frame *read_data(char const *filename, int &num_frames, Frame *initial)
     }
 
     fseek(f, 0, SEEK_END);
-    num_frames = ftell(f) / (kNumCubes * 2 * sizeof(CubeState));
+    num_frames = ftell(f) / (kNumCubes * sizeof(CubeState)) - 1;
     fseek(f, 0, SEEK_SET);
 
     Frame *frames = new Frame[num_frames];
 
+    // read initial frame cubes
+    if (fread(initial->cubes, sizeof(CubeState), kNumCubes, f) != kNumCubes)
+    {
+        printf("error reading initial frame!\n");
+        exit(1);
+    }
+
     for (int frame = 0; frame < num_frames; ++frame)
     {
-        for (int cube = 0; cube < kNumCubes; ++cube)
+        if (fread(frames[frame].cubes, sizeof(CubeState), kNumCubes, f) != kNumCubes)
         {
-            if (fread(&frames[frame].cubes[cube], sizeof(CubeState), 1, f) != 1)
-            {
-                printf("error reading frame %d cube %d!\n", frame, cube);
-                exit(1);
-            }
-
-            // On frame 0, we read the "prev" state into the "initial" state
-            if (frame == 0)
-                fread(&initial->cubes[cube], sizeof(CubeState), 1, f);
-            else
-                fread(&dummy, sizeof(CubeState), 1, f); // skip ref CubeState
+            printf("error reading frame %d!\n", frame);
+            exit(1);
         }
     }
 
@@ -509,19 +505,10 @@ static void write_data(char const *filename, Frame *frames, int num_frames, Fram
         exit(1);
     }
 
-    for (int frame = 0; frame < num_frames; ++frame)
-    {
-        Frame *cur_frame = &frames[frame];
-        Frame const *ref_frame = (frame >= kRefDist) ? &frames[frame - kRefDist] : initial;
+    fwrite(initial->cubes, sizeof(CubeState), kNumCubes, f);
 
-        for (int cube = 0; cube < kNumCubes; ++cube)
-        {
-            // current data
-            fwrite(&cur_frame->cubes[cube], sizeof(CubeState), 1, f);
-            // ref data from ref frame (0 when no ref frame)
-            fwrite(&ref_frame->cubes[cube], sizeof(CubeState), 1, f);
-        }
-    }
+    for (int frame = 0; frame < num_frames; ++frame)
+        fwrite(frames[frame].cubes, sizeof(CubeState), kNumCubes, f);
 
     fclose(f);
 }
@@ -533,7 +520,7 @@ int main()
     // Read the data
     printf("reading...\n");
     int num_frames;
-    Frame *frames = read_data("delta_data_new.bin", num_frames, &initial_frame);
+    Frame *frames = read_data("delta_data_realnew.bin", num_frames, &initial_frame);
     printf("done.\n");
 
     // Coding loop
