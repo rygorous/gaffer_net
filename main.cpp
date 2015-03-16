@@ -1,6 +1,4 @@
-// Simple byte-aligned binary arithmetic coder (Ilya Muravyov's variant) - public domain - Fabian 'ryg' Giesen 2015
-//
-// Written for clarity not speed!
+#define CHECK_RESULTS
 
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
@@ -333,6 +331,13 @@ struct CubeState
     int interacting;
 };
 
+struct PredState
+{
+    int vel_x;
+    int vel_y;
+    int vel_z;
+};
+
 struct ModelSet
 {
     typedef BinShiftModel<5> DefaultBit;
@@ -352,9 +357,18 @@ struct ModelSet
 
 struct Frame
 {
+    Frame();
+
     CubeState cubes[kNumCubes];
     ModelSet models; // coding state
+    PredState pred[kNumCubes]; // prediction state
 };
+
+Frame::Frame()
+{
+    memset(cubes, 0, sizeof(cubes));
+    memset(pred, 0, sizeof(pred));
+}
 
 static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
 {
@@ -367,7 +381,9 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
     for (int i = 0; i < kNumCubes; ++i)
     {
         CubeState *cube = &cur->cubes[i];
+        PredState *pred = &cur->pred[i];
         CubeState const *refc = &ref->cubes[i];
+        PredState const *refp = &ref->pred[i];
 
         bool diff_orient = false;
 
@@ -401,12 +417,19 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
         if (dx || dy || dz)
         {
             m.pos_different[diff_orient].encode(coder, 1);
-            m.pos_xy.encode(coder, dx);
-            m.pos_xy.encode(coder, dy);
-            m.pos_z.encode(coder, dz);
+            m.pos_xy.encode(coder, dx - refp->vel_x);
+            m.pos_xy.encode(coder, dy - refp->vel_y);
+            m.pos_z.encode(coder, dz - refp->vel_z);
         }
         else
             m.pos_different[diff_orient].encode(coder, 0);
+
+        // NOTE: in general, we would need to account for variable frame
+        // spacing here. But in this testbed we always predict from 6 frames
+        // ago.
+        pred->vel_x = dx;
+        pred->vel_y = dy;
+        pred->vel_z = dz;
 
         m.interacting[refc->interacting].encode(coder, cube->interacting);
     }
@@ -423,7 +446,9 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
     for (int i = 0; i < kNumCubes; ++i)
     {
         CubeState *cube = &cur->cubes[i];
+        PredState *pred = &cur->pred[i];
         CubeState const *refc = &ref->cubes[i];
+        PredState const *refp = &ref->pred[i];
         bool diff_orient = false;
 
         if (m.orientation_different.decode(coder))
@@ -454,14 +479,17 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         int dx = 0, dy = 0, dz = 0;
         if (m.pos_different[diff_orient].decode(coder))
         {
-            dx = m.pos_xy.decode(coder);
-            dy = m.pos_xy.decode(coder);
-            dz = m.pos_z.decode(coder);
+            dx = refp->vel_x + m.pos_xy.decode(coder);
+            dy = refp->vel_y + m.pos_xy.decode(coder);
+            dz = refp->vel_z + m.pos_z.decode(coder);
         }
 
         cube->position_x = refc->position_x + dx;
         cube->position_y = refc->position_y + dy;
         cube->position_z = refc->position_z + dz;
+        pred->vel_x = dx;
+        pred->vel_y = dy;
+        pred->vel_z = dz;
 
         cube->interacting = m.interacting[refc->interacting].decode(coder);
     }
@@ -546,11 +574,13 @@ int main()
         encode_frame(packet_buf, cur, ref);
         decode_frame(packet_buf, &out, ref);
 
+#ifdef CHECK_RESULTS
         if (memcmp(out.cubes, cur->cubes, sizeof(out.cubes)) != 0)
         {
             printf("decode mismatch on frame %d\n", frame);
             return 1;
         }
+#endif
 
         packet_size_sum += packet_buf.size();
     }
