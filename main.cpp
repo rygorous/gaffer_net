@@ -388,12 +388,12 @@ struct ModelSet
     typedef TwoBinShiftModel<3, 7> DefaultBit;
     typedef SExpGolombModel<DefaultBit, DefaultBit> SExpGolomb;
 
-    DefaultBit orientation_different[2]; // [refp.changing]
+    DefaultBit orientation_different[4]; // [refp.changing + 2*close_to_cube0]
     BitTreeModel<DefaultBit, 2> orientation_largest[4*4]; // [orient_context]
     SExpGolomb orientation_delta[kNumMagCtx + 1]; // [mag_ctx]
     DefaultBit orientation_signflip[2]; // [second_largest_sign]
 
-    DefaultBit pos_different[2]; // [orientation_differs]
+    DefaultBit pos_different[8]; // [orientation_differs + 2*orient_diff_ctx]
     SExpGolomb pos_delta[kNumMagCtx]; // [mag_ctx]
 
     DefaultBit interacting[4]; // [ref.interacting + 2*any_diff]
@@ -479,6 +479,15 @@ static void unpack_quat_prediction(int dest[4], int const src[3], int largest)
     dest[largest] = 450;
 }
 
+static bool are_close(CubeState const *a, CubeState const *b)
+{
+    for (int i = 0; i < 3; i++)
+        if (abs(a->position[i] - b->position[i]) >= 2048)
+            return false;
+
+    return true;
+}
+
 static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
 {
     BinArithEncoder coder(dest);
@@ -487,12 +496,12 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
     // Start with ref frame models
     m = ref->models;
 
-    for (int i = 0; i < kNumCubes; ++i)
+    for (int cube_id = 0; cube_id < kNumCubes; ++cube_id)
     {
-        CubeState *cube = &cur->cubes[i];
-        PredState *pred = &cur->pred[i];
-        CubeState const *refc = &ref->cubes[i];
-        PredState const *refp = &ref->pred[i];
+        CubeState *cube = &cur->cubes[cube_id];
+        PredState *pred = &cur->pred[cube_id];
+        CubeState const *refc = &ref->cubes[cube_id];
+        PredState const *refp = &ref->pred[cube_id];
 
         int diff_orient = (cube->orientation_largest != refc->orientation_largest), diff_pos = 0;
         for (int i = 0; i < 3; ++i)
@@ -503,7 +512,11 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
             diff_pos |= pred->vel[i];
         }
 
-        m.orientation_different[refp->changing].encode(coder, diff_orient);
+        int orient_diff_ctx = refp->changing;
+        if (are_close(refc, &ref->cubes[0]))
+            orient_diff_ctx |= 2;
+
+        m.orientation_different[orient_diff_ctx].encode(coder, diff_orient);
         if (diff_orient)
         {
             int orient_ctx = orient_context(refc);
@@ -545,7 +558,7 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
             }
         }
 
-        m.pos_different[diff_orient != 0].encode(coder, diff_pos != 0);
+        m.pos_different[(diff_orient != 0) + orient_diff_ctx*2].encode(coder, diff_pos != 0);
         if (diff_pos)
         {
             for (int i = 0; i < 3; ++i)
@@ -572,15 +585,19 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
     // Start with ref frame models
     m = ref->models;
 
-    for (int i = 0; i < kNumCubes; ++i)
+    for (int cube_id = 0; cube_id < kNumCubes; ++cube_id)
     {
-        CubeState *cube = &cur->cubes[i];
-        PredState *pred = &cur->pred[i];
-        CubeState const *refc = &ref->cubes[i];
-        PredState const *refp = &ref->pred[i];
+        CubeState *cube = &cur->cubes[cube_id];
+        PredState *pred = &cur->pred[cube_id];
+        CubeState const *refc = &ref->cubes[cube_id];
+        PredState const *refp = &ref->pred[cube_id];
         bool diff_orient = false;
 
-        if (m.orientation_different[refp->changing].decode(coder))
+        int orient_diff_ctx = refp->changing;
+        if (are_close(refc, &ref->cubes[0]))
+            orient_diff_ctx |= 2;
+
+        if (m.orientation_different[orient_diff_ctx].decode(coder))
         {
             diff_orient = true;
             int orient_ctx = orient_context(refc);
@@ -631,7 +648,7 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         }
 
         bool diff_pos = false;
-        if (m.pos_different[diff_orient].decode(coder))
+        if (m.pos_different[diff_orient + orient_diff_ctx*2].decode(coder))
         {
             diff_pos = true;
             for (int i = 0; i < 3; ++i)
