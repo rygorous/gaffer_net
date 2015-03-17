@@ -315,25 +315,26 @@ struct UExpGolombModel
 };
 
 // Signed exponential Golomb-style model.
-template<typename MagModel>
+template<typename MagModel, typename SignModel>
 struct SExpGolombModel
 {
     UExpGolombModel<MagModel> abs_coder;
+    SignModel sign[2];
 
-    void encode(BinArithEncoder &enc, int32_t value)
+    void encode(BinArithEncoder &enc, int32_t value, bool sign_pred)
     {
         uint32_t absv = (value < 0) ? -value : value;
         abs_coder.encode(enc, absv);
         if (absv)
-            enc.encode(value < 0, kProbMax / 2);
+            sign[sign_pred].encode(enc, value < 0);
     }
 
-    int32_t decode(BinArithDecoder &dec)
+    int32_t decode(BinArithDecoder &dec, bool sign_pred)
     {
         int32_t v = abs_coder.decode(dec);
         if (v)
         {
-            if (dec.decode(kProbMax / 2))
+            if (sign[sign_pred].decode(dec))
                 v = -v;
         }
 
@@ -370,7 +371,7 @@ struct ModelSet
     static const int kNumMagCtx = 10;
 
     typedef TwoBinShiftModel<3, 7> DefaultBit;
-    typedef SExpGolombModel<DefaultBit> SExpGolomb;
+    typedef SExpGolombModel<DefaultBit, DefaultBit> SExpGolomb;
 
     DefaultBit orientation_different[2]; // [refp.changing]
     BitTreeModel<DefaultBit, 2> orientation_largest[4*4]; // [orient_context]
@@ -441,12 +442,19 @@ static int mag_context(int dv)
     return ctx;
 }
 
-static int orient_newmag_context(int axis, int old_largest, PredState const *refp)
+static int orient_newmag_context(int axis, int old_largest, PredState const *refp, bool *sign_bit, bool flipped)
 {
     if (axis != old_largest)
-        return mag_context(refp->orient_delta[abc_from_xyzw(axis, old_largest)]);
+    {
+        int old_ind = abc_from_xyzw(axis, old_largest);
+        *sign_bit = (refp->orient_delta[old_ind] < 0) ^ flipped;
+        return mag_context(refp->orient_delta[old_ind]);
+    }
     else
+    {
+        *sign_bit = flipped;
         return ModelSet::kNumMagCtx;
+    }
 }
 
 static void unpack_quat_prediction(int dest[4], int const src[3], int largest)
@@ -490,7 +498,7 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
                 for (int i = 0; i < 3; ++i)
                 {
                     int ctx = mag_context(refp->orient_delta[i]);
-                    m.orientation_delta[ctx].encode(coder, pred->orient_delta[i]);
+                    m.orientation_delta[ctx].encode(coder, pred->orient_delta[i], refp->orient_delta[i] < 0);
                 }
             }
             else
@@ -498,11 +506,13 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
                 int old_largest = refc->orientation_largest;
                 int new_largest = cube->orientation_largest;
                 int old[4];
+                bool flipped = false;
                 unpack_quat_prediction(old, refc->orientation, old_largest);
 
                 int sign_context = old[new_largest] < 256;
                 if (cube->orientation[abc_from_xyzw(old_largest, new_largest)] < 256)
                 {
+                    flipped = true;
                     m.orientation_signflip[sign_context].encode(coder, 1);
                     for (int i = 0; i < 4; ++i)
                         old[i] = 512 - old[i];
@@ -513,8 +523,9 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
                 for (int i = 0; i < 3; ++i)
                 {
                     int axis = xyzw_from_abc(i, new_largest);
-                    int ctx = orient_newmag_context(axis, old_largest, refp);
-                    m.orientation_delta[ctx].encode(coder, cube->orientation[i] - old[axis]);
+                    bool sign_bit;
+                    int ctx = orient_newmag_context(axis, old_largest, refp, &sign_bit, flipped);
+                    m.orientation_delta[ctx].encode(coder, cube->orientation[i] - old[axis], sign_bit);
                 }
             }
         }
@@ -525,7 +536,7 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
             for (int i = 0; i < 3; ++i)
             {
                 int ctx = mag_context(refp->vel[i]);
-                m.pos_delta[ctx].encode(coder, pred->vel[i] - refp->vel[i]);
+                m.pos_delta[ctx].encode(coder, pred->vel[i] - refp->vel[i], refp->vel[i] < 0);
             }
         }
 
@@ -564,7 +575,7 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
                 for (int i = 0; i < 3; ++i)
                 {
                     int ctx = mag_context(refp->orient_delta[i]);
-                    cube->orientation[i] = refc->orientation[i] + m.orientation_delta[ctx].decode(coder);
+                    cube->orientation[i] = refc->orientation[i] + m.orientation_delta[ctx].decode(coder, refp->orient_delta[i] < 0);
                 }
             }
             else
@@ -573,9 +584,11 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
                 int new_largest = cube->orientation_largest;
                 int old[4];
                 unpack_quat_prediction(old, refc->orientation, old_largest);
+                bool flipped = false;
 
                 if (m.orientation_signflip[old[new_largest] < 256].decode(coder))
                 {
+                    flipped = true;
                     for (int i = 0; i < 4; ++i)
                         old[i] = 512 - old[i];
                 }
@@ -583,8 +596,9 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
                 for (int i = 0; i < 3; ++i)
                 {
                     int axis = xyzw_from_abc(i, new_largest);
-                    int ctx = orient_newmag_context(axis, old_largest, refp);
-                    cube->orientation[i] = m.orientation_delta[ctx].decode(coder) + old[axis];
+                    bool sign_bit;
+                    int ctx = orient_newmag_context(axis, old_largest, refp, &sign_bit, flipped);
+                    cube->orientation[i] = m.orientation_delta[ctx].decode(coder, sign_bit) + old[axis];
                 }
             }
         }
@@ -606,7 +620,7 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
             for (int i = 0; i < 3; ++i)
             {
                 int ctx = mag_context(refp->vel[i]);
-                pred->vel[i] = refp->vel[i] + m.pos_delta[ctx].decode(coder);
+                pred->vel[i] = refp->vel[i] + m.pos_delta[ctx].decode(coder, refp->vel[i] < 0);
             }
         }
 
