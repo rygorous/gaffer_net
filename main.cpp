@@ -361,6 +361,7 @@ struct CubeState
 struct PredState
 {
     int changing;
+    int orient_delta[3];
     int vel[3];
 };
 
@@ -463,21 +464,24 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
         CubeState const *refc = &ref->cubes[i];
         PredState const *refp = &ref->pred[i];
 
-        bool diff_orient = false;
-
-        if (cube->orientation_largest != refc->orientation_largest ||
-            cube->orientation[0] != refc->orientation[0] ||
-            cube->orientation[1] != refc->orientation[1] ||
-            cube->orientation[2] != refc->orientation[2])
+        int diff_orient = (cube->orientation_largest != refc->orientation_largest), diff_pos = 0;
+        for (int i = 0; i < 3; ++i)
         {
-            diff_orient = true;
-            m.orientation_different[refp->changing].encode(coder, 1);
+            pred->orient_delta[i] = cube->orientation[i] - refc->orientation[i];
+            pred->vel[i] = cube->position[i] - refc->position[i];
+            diff_orient |= pred->orient_delta[i];
+            diff_pos |= pred->vel[i];
+        }
+
+        m.orientation_different[refp->changing].encode(coder, diff_orient);
+        if (diff_orient)
+        {
             int orient_ctx = orient_context(refc);
             m.orientation_largest[orient_ctx].encode(coder, cube->orientation_largest);
             if (cube->orientation_largest == refc->orientation_largest)
             {
                 for (int i = 0; i < 3; ++i)
-                    m.orientation_delta.encode(coder, cube->orientation[i] - refc->orientation[i]);
+                    m.orientation_delta.encode(coder, pred->orient_delta[i]);
             }
             else
             {
@@ -500,34 +504,23 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
                     m.orientation_delta.encode(coder, cube->orientation[i] - old[xyzw_from_abc(i, new_largest)]);
             }
         }
-        else
-            m.orientation_different[refp->changing].encode(coder, 0);
 
-        int diff_pos = 0;
-        for (int i = 0; i < 3; ++i)
-        {
-            pred->vel[i] = cube->position[i] - refc->position[i];
-            diff_pos |= pred->vel[i];
-        }
-
+        m.pos_different[diff_orient != 0].encode(coder, diff_pos != 0);
         if (diff_pos)
         {
-            m.pos_different[diff_orient].encode(coder, 1);
             for (int i = 0; i < 3; ++i)
             {
                 int ctx = pos_context(refp->vel[i]);
                 m.pos_delta[ctx].encode(coder, pred->vel[i] - refp->vel[i]);
             }
         }
-        else
-            m.pos_different[diff_orient].encode(coder, 0);
 
         m.interacting[refc->interacting].encode(coder, cube->interacting);
 
         // NOTE: in general, we would need to account for variable frame
         // spacing here. But in this testbed we always predict from 6 frames
         // ago, so no problem.
-        pred->changing = (int(diff_orient) | diff_pos) != 0;
+        pred->changing = (diff_orient | diff_pos) != 0;
     }
 }
 
