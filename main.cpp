@@ -7,6 +7,7 @@
 #include <string.h>
 #include <assert.h>
 #include <math.h>
+#include <time.h>
 #include <vector>
 
 // Probabilities are expressed in fixed point, with kProbBits bits of
@@ -189,6 +190,42 @@ struct BinShiftModel
     }
 };
 
+template<int Inertia0, int Inertia1>
+struct TwoBinShiftModel
+{
+    uint16_t p0, p1;
+
+    TwoBinShiftModel() : p0(kProbMax / 4), p1(kProbMax / 4) {}
+
+    void encode(BinArithEncoder &enc, int bit)
+    {
+        enc.encode(bit, p0 + p1);
+        adapt(bit);
+    }
+
+    int decode(BinArithDecoder &dec)
+    {
+        int bit = dec.decode(p0 + p1);
+        adapt(bit);
+        return bit;
+    }
+
+    void adapt(int bit)
+    {
+        // Note prob never his 0 or kProbMax with this update rule!
+        if (bit)
+        {
+            p0 += (kProbMax/2 - p0) >> Inertia0;
+            p1 += (kProbMax/2 - p1) >> Inertia1;
+        }
+        else
+        {
+            p0 -= p0 >> Inertia0;
+            p1 -= p1 >> Inertia1;
+        }
+    }
+};
+
 // BitTree model. A tree-shaped cascade of BinShiftModels.
 // This is the de-facto standard way to build a multi-symbol coder
 // (values with NumBits bits) out of binary models.
@@ -315,9 +352,7 @@ struct CubeState
 {
     int orientation_largest;
     int orientation[3];
-    int position_x;
-    int position_y;
-    int position_z;
+    int position[3];
     int interacting;
 };
 
@@ -326,25 +361,22 @@ struct CubeState
 struct PredState
 {
     int changing;
-    int vel_x;
-    int vel_y;
-    int vel_z;
+    int vel[3];
 };
 
 struct ModelSet
 {
-    typedef BinShiftModel<5> DefaultBit;
+    typedef TwoBinShiftModel<3, 7> DefaultBit;
     typedef SExpGolombModel<DefaultBit> SExpGolomb;
 
     DefaultBit orientation_different[2]; // [refp.changing]
-    BitTreeModel<DefaultBit, 2> orientation_largest[4][5]; // [ref.orientation_largest][orient_context]
+    BitTreeModel<DefaultBit, 2> orientation_largest[20]; // [orient_context]
     SExpGolomb orientation_delta;
     DefaultBit orientation_signflip[2]; // [second_largest_sign]
     SExpGolomb orientation_val;
 
     DefaultBit pos_different[2]; // [orientation_differs]
-    SExpGolomb pos_xy;
-    SExpGolomb pos_z;
+    SExpGolomb pos_delta;
 
     DefaultBit interacting[2]; // [ref.interacting]
 };
@@ -377,6 +409,7 @@ static int abc_from_xyzw(int xyzw_ind, int largest)
 
 static int second_largest(CubeState const *cube, int *magn)
 {
+    // Largest axis is elided. Find index and magnitude of second-largest.
     int v[3];
     for (int i = 0; i < 3; ++i)
         v[i] = abs(cube->orientation[i] - 256);
@@ -393,11 +426,13 @@ static int second_largest(CubeState const *cube, int *magn)
 
 static int orient_context(CubeState const *cube)
 {
+    // If second-largest axis is large enough, use it for context.
     int magn;
     int second = second_largest(cube, &magn);
     if (magn < 128)
-        second = 4;
-    return second;
+        return cube->orientation_largest;
+    else
+        return cube->orientation_largest + (second+1) * 4;
 }
 
 static void unpack_quat_prediction(int dest[4], int const src[3], int largest)
@@ -406,8 +441,6 @@ static void unpack_quat_prediction(int dest[4], int const src[3], int largest)
         dest[xyzw_from_abc(i, largest)] = src[i];
     dest[largest] = 450;
 }
-
-#define NEW_DELTA_QUAT
 
 static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
 {
@@ -433,8 +466,8 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
         {
             diff_orient = true;
             m.orientation_different[refp->changing].encode(coder, 1);
-            int second = orient_context(refc);
-            m.orientation_largest[refc->orientation_largest][second].encode(coder, cube->orientation_largest);
+            int orient_ctx = orient_context(refc);
+            m.orientation_largest[orient_ctx].encode(coder, cube->orientation_largest);
             if (cube->orientation_largest == refc->orientation_largest)
             {
                 for (int i = 0; i < 3; ++i)
@@ -442,7 +475,6 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
             }
             else
             {
-#ifdef NEW_DELTA_QUAT
                 int old_largest = refc->orientation_largest;
                 int new_largest = cube->orientation_largest;
                 int old[4];
@@ -459,25 +491,24 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
                     m.orientation_signflip[sign_context].encode(coder, 0);
 
                 for (int i = 0; i < 3; ++i)
-                    m.orientation_val.encode(coder, cube->orientation[i] - old[xyzw_from_abc(i, new_largest)]);
-#else
-                for (int i = 0; i < 3; ++i)
-                    m.orientation_val.encode(coder, cube->orientation[i] - 256);
-#endif
+                    m.orientation_delta.encode(coder, cube->orientation[i] - old[xyzw_from_abc(i, new_largest)]);
             }
         }
         else
             m.orientation_different[refp->changing].encode(coder, 0);
 
-        int dx = cube->position_x - refc->position_x;
-        int dy = cube->position_y - refc->position_y;
-        int dz = cube->position_z - refc->position_z;
-        if (dx || dy || dz)
+        int diff_pos = 0;
+        for (int i = 0; i < 3; ++i)
+        {
+            pred->vel[i] = cube->position[i] - refc->position[i];
+            diff_pos |= pred->vel[i];
+        }
+
+        if (diff_pos)
         {
             m.pos_different[diff_orient].encode(coder, 1);
-            m.pos_xy.encode(coder, dx - refp->vel_x);
-            m.pos_xy.encode(coder, dy - refp->vel_y);
-            m.pos_z.encode(coder, dz - refp->vel_z);
+            for (int i = 0; i < 3; ++i)
+                m.pos_delta.encode(coder, pred->vel[i] - refp->vel[i]);
         }
         else
             m.pos_different[diff_orient].encode(coder, 0);
@@ -486,11 +517,8 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
 
         // NOTE: in general, we would need to account for variable frame
         // spacing here. But in this testbed we always predict from 6 frames
-        // ago.
-        pred->vel_x = dx;
-        pred->vel_y = dy;
-        pred->vel_z = dz;
-        pred->changing = (int(diff_orient) | dx | dy | dz) != 0;
+        // ago, so no problem.
+        pred->changing = (int(diff_orient) | diff_pos) != 0;
     }
 }
 
@@ -513,8 +541,8 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         if (m.orientation_different[refp->changing].decode(coder))
         {
             diff_orient = true;
-            int second = orient_context(refc);
-            cube->orientation_largest = (int) m.orientation_largest[refc->orientation_largest][second].decode(coder);
+            int orient_ctx = orient_context(refc);
+            cube->orientation_largest = (int) m.orientation_largest[orient_ctx].decode(coder);
             if (cube->orientation_largest == refc->orientation_largest)
             {
                 for (int i = 0; i < 3; ++i)
@@ -522,7 +550,6 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
             }
             else
             {
-#ifdef NEW_DELTA_QUAT
                 int old_largest = refc->orientation_largest;
                 int new_largest = cube->orientation_largest;
                 int old[4];
@@ -535,11 +562,7 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
                 }
 
                 for (int i = 0; i < 3; ++i)
-                    cube->orientation[i] = m.orientation_val.decode(coder) + old[xyzw_from_abc(i, new_largest)];
-#else
-                for (int i = 0; i < 3; ++i)
-                    cube->orientation[i] = m.orientation_val.decode(coder) + 256;
-#endif
+                    cube->orientation[i] = m.orientation_delta.decode(coder) + old[xyzw_from_abc(i, new_largest)];
             }
         }
         else
@@ -549,23 +572,18 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
                 cube->orientation[i] = refc->orientation[i];
         }
 
-        int dx = 0, dy = 0, dz = 0;
+        pred->vel[0] = pred->vel[1] = pred->vel[2] = 0;
         if (m.pos_different[diff_orient].decode(coder))
         {
-            dx = refp->vel_x + m.pos_xy.decode(coder);
-            dy = refp->vel_y + m.pos_xy.decode(coder);
-            dz = refp->vel_z + m.pos_z.decode(coder);
+            for (int i = 0; i < 3; ++i)
+                pred->vel[i] = refp->vel[i] + m.pos_delta.decode(coder);
         }
 
-        cube->position_x = refc->position_x + dx;
-        cube->position_y = refc->position_y + dy;
-        cube->position_z = refc->position_z + dz;
-        cube->interacting = m.interacting[refc->interacting].decode(coder);
+        for (int i = 0; i < 3; ++i)
+            cube->position[i] = refc->position[i] + pred->vel[i];
 
-        pred->vel_x = dx;
-        pred->vel_y = dy;
-        pred->vel_z = dz;
-        pred->changing = (int(diff_orient) | dx | dy | dz) != 0;
+        cube->interacting = m.interacting[refc->interacting].decode(coder);
+        pred->changing = (int(diff_orient) | pred->vel[0] | pred->vel[1] | pred->vel[2]) != 0;
     }
 }
 
@@ -640,6 +658,8 @@ int main()
     size_t packet_count = 0;
     Frame out;
 
+    clock_t enc_start = clock();
+
     // Gaffer says skip the first 6 frames. Okay.
     for (int frame = 6; frame < num_frames; ++frame)
     {
@@ -662,6 +682,8 @@ int main()
         ++packet_count;
     }
 
+    double enc_time = double(clock() - enc_start) / CLOCKS_PER_SEC;
+    printf("processing took %.2fs (%.2fus/frame)\n", enc_time, 1e6*enc_time / (double)packet_count);
     printf("total packed size %d\n", (int)packet_size_sum);
 
     double bytes_per_frame = (double)packet_size_sum / (double)packet_count;
