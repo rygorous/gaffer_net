@@ -366,6 +366,8 @@ struct PredState
 
 struct ModelSet
 {
+    static const int kNumPosCtx = 10;
+
     typedef TwoBinShiftModel<3, 7> DefaultBit;
     typedef SExpGolombModel<DefaultBit> SExpGolomb;
 
@@ -376,7 +378,7 @@ struct ModelSet
     SExpGolomb orientation_val;
 
     DefaultBit pos_different[2]; // [orientation_differs]
-    SExpGolomb pos_delta;
+    SExpGolomb pos_delta[kNumPosCtx]; // [pos_ctx]
 
     DefaultBit interacting[2]; // [ref.interacting]
 };
@@ -433,6 +435,18 @@ static int orient_context(CubeState const *cube)
         return cube->orientation_largest;
     else
         return cube->orientation_largest + (second+1) * 4;
+}
+
+static int pos_context(int dv)
+{
+    int v = abs(dv);
+    int ctx = 0;
+    while (v > 1 && ctx < ModelSet::kNumPosCtx - 1)
+    {
+        ++ctx;
+        v /= 2;
+    }
+    return ctx;
 }
 
 static void unpack_quat_prediction(int dest[4], int const src[3], int largest)
@@ -508,7 +522,10 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
         {
             m.pos_different[diff_orient].encode(coder, 1);
             for (int i = 0; i < 3; ++i)
-                m.pos_delta.encode(coder, pred->vel[i] - refp->vel[i]);
+            {
+                int ctx = pos_context(refp->vel[i]);
+                m.pos_delta[ctx].encode(coder, pred->vel[i] - refp->vel[i]);
+            }
         }
         else
             m.pos_different[diff_orient].encode(coder, 0);
@@ -573,10 +590,14 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         }
 
         pred->vel[0] = pred->vel[1] = pred->vel[2] = 0;
+
         if (m.pos_different[diff_orient].decode(coder))
         {
             for (int i = 0; i < 3; ++i)
-                pred->vel[i] = refp->vel[i] + m.pos_delta.decode(coder);
+            {
+                int ctx = pos_context(refp->vel[i]);
+                pred->vel[i] = refp->vel[i] + m.pos_delta[ctx].decode(coder);
+            }
         }
 
         for (int i = 0; i < 3; ++i)
