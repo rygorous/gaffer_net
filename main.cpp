@@ -372,7 +372,7 @@ struct ModelSet
     typedef SExpGolombModel<DefaultBit> SExpGolomb;
 
     DefaultBit orientation_different[2]; // [refp.changing]
-    BitTreeModel<DefaultBit, 2> orientation_largest[20]; // [orient_context]
+    BitTreeModel<DefaultBit, 2> orientation_largest[4*4]; // [orient_context]
     SExpGolomb orientation_delta;
     DefaultBit orientation_signflip[2]; // [second_largest_sign]
     SExpGolomb orientation_val;
@@ -409,7 +409,7 @@ static int abc_from_xyzw(int xyzw_ind, int largest)
     return xyzw_ind - (xyzw_ind >= largest);
 }
 
-static int second_largest(CubeState const *cube, int *magn)
+static int orient_context(CubeState const *cube)
 {
     // Largest axis is elided. Find index and magnitude of second-largest.
     int v[3];
@@ -422,19 +422,11 @@ static int second_largest(CubeState const *cube, int *magn)
     else
         abc_ind = (v[1] >= v[2]) ? 1 : 2;
 
-    *magn = v[abc_ind];
-    return xyzw_from_abc(abc_ind, cube->orientation_largest);
-}
+    int ctx = cube->orientation_largest;
+    if (v[abc_ind] >= 128) // second-largest axis is getting closer to cross-over
+        ctx += 4 * (abc_ind + 1);
 
-static int orient_context(CubeState const *cube)
-{
-    // If second-largest axis is large enough, use it for context.
-    int magn;
-    int second = second_largest(cube, &magn);
-    if (magn < 128)
-        return cube->orientation_largest;
-    else
-        return cube->orientation_largest + (second+1) * 4;
+    return ctx;
 }
 
 static int pos_context(int dv)
