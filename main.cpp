@@ -381,7 +381,7 @@ struct ModelSet
     DefaultBit pos_different[2]; // [orientation_differs]
     SExpGolomb pos_delta[kNumMagCtx]; // [mag_ctx]
 
-    DefaultBit interacting[2]; // [ref.interacting]
+    DefaultBit interacting[4]; // [ref.interacting + 2*any_diff]
 };
 
 struct Frame
@@ -540,7 +540,7 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
             }
         }
 
-        m.interacting[refc->interacting].encode(coder, cube->interacting);
+        m.interacting[refc->interacting + ((diff_orient || diff_pos) ? 2 : 0)].encode(coder, cube->interacting);
 
         // NOTE: in general, we would need to account for variable frame
         // spacing here. But in this testbed we always predict from 6 frames
@@ -615,8 +615,10 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
             pred->vel[i] = 0;
         }
 
+        bool diff_pos = false;
         if (m.pos_different[diff_orient].decode(coder))
         {
+            diff_pos = true;
             for (int i = 0; i < 3; ++i)
             {
                 int ctx = mag_context(refp->vel[i]);
@@ -627,7 +629,7 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         for (int i = 0; i < 3; ++i)
             cube->position[i] = refc->position[i] + pred->vel[i];
 
-        cube->interacting = m.interacting[refc->interacting].decode(coder);
+        cube->interacting = m.interacting[refc->interacting + ((diff_orient || diff_pos) ? 2 : 0)].decode(coder);
         pred->changing = (int(diff_orient) | pred->vel[0] | pred->vel[1] | pred->vel[2]) != 0;
     }
 }
