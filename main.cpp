@@ -540,7 +540,7 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
             }
         }
 
-        m.interacting[refc->interacting + ((diff_orient || diff_pos) ? 2 : 0)].encode(coder, cube->interacting);
+        m.interacting[refc->interacting + ((diff_orient | diff_pos) ? 2 : 0)].encode(coder, cube->interacting);
 
         // NOTE: in general, we would need to account for variable frame
         // spacing here. But in this testbed we always predict from 6 frames
@@ -629,8 +629,8 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         for (int i = 0; i < 3; ++i)
             cube->position[i] = refc->position[i] + pred->vel[i];
 
-        cube->interacting = m.interacting[refc->interacting + ((diff_orient || diff_pos) ? 2 : 0)].decode(coder);
-        pred->changing = (int(diff_orient) | pred->vel[0] | pred->vel[1] | pred->vel[2]) != 0;
+        cube->interacting = m.interacting[refc->interacting + ((diff_orient | diff_pos) ? 2 : 0)].decode(coder);
+        pred->changing = (int(diff_orient) | int(diff_pos)) != 0;
     }
 }
 
