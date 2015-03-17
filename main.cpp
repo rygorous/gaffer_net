@@ -314,9 +314,7 @@ static const int kFrameRate = 60; // just used to calc kbps
 struct CubeState
 {
     int orientation_largest;
-    int orientation_a;
-    int orientation_b;
-    int orientation_c;
+    int orientation[3];
     int position_x;
     int position_y;
     int position_z;
@@ -339,8 +337,9 @@ struct ModelSet
     typedef SExpGolombModel<DefaultBit> SExpGolomb;
 
     DefaultBit orientation_different[2]; // [refp.changing]
-    BitTreeModel<DefaultBit, 2> orientation_largest[4]; // [ref.orientation_largest]
+    BitTreeModel<DefaultBit, 2> orientation_largest[4][5]; // [ref.orientation_largest][orient_context]
     SExpGolomb orientation_delta;
+    DefaultBit orientation_signflip[2]; // [second_largest_sign]
     SExpGolomb orientation_val;
 
     DefaultBit pos_different[2]; // [orientation_differs]
@@ -365,6 +364,51 @@ Frame::Frame()
     memset(pred, 0, sizeof(pred));
 }
 
+static int xyzw_from_abc(int abc_ind, int largest)
+{
+    return abc_ind + (abc_ind >= largest);
+}
+
+static int abc_from_xyzw(int xyzw_ind, int largest)
+{
+    assert(xyzw_ind != largest);
+    return xyzw_ind - (xyzw_ind >= largest);
+}
+
+static int second_largest(CubeState const *cube, int *magn)
+{
+    int v[3];
+    for (int i = 0; i < 3; ++i)
+        v[i] = abs(cube->orientation[i] - 256);
+
+    int abc_ind;
+    if (v[0] >= v[1])
+        abc_ind = (v[0] >= v[2]) ? 0 : 2;
+    else
+        abc_ind = (v[1] >= v[2]) ? 1 : 2;
+
+    *magn = v[abc_ind];
+    return xyzw_from_abc(abc_ind, cube->orientation_largest);
+}
+
+static int orient_context(CubeState const *cube)
+{
+    int magn;
+    int second = second_largest(cube, &magn);
+    if (magn < 128)
+        second = 4;
+    return second;
+}
+
+static void unpack_quat_prediction(int dest[4], int const src[3], int largest)
+{
+    for (int i = 0; i < 3; ++i)
+        dest[xyzw_from_abc(i, largest)] = src[i];
+    dest[largest] = 450;
+}
+
+#define NEW_DELTA_QUAT
+
 static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
 {
     BinArithEncoder coder(dest);
@@ -383,28 +427,43 @@ static void encode_frame(ByteVec &dest, Frame *cur, Frame const *ref)
         bool diff_orient = false;
 
         if (cube->orientation_largest != refc->orientation_largest ||
-            cube->orientation_a != refc->orientation_a ||
-            cube->orientation_b != refc->orientation_b ||
-            cube->orientation_c != refc->orientation_c)
+            cube->orientation[0] != refc->orientation[0] ||
+            cube->orientation[1] != refc->orientation[1] ||
+            cube->orientation[2] != refc->orientation[2])
         {
             diff_orient = true;
             m.orientation_different[refp->changing].encode(coder, 1);
-            m.orientation_largest[refc->orientation_largest].encode(coder, cube->orientation_largest);
+            int second = orient_context(refc);
+            m.orientation_largest[refc->orientation_largest][second].encode(coder, cube->orientation_largest);
             if (cube->orientation_largest == refc->orientation_largest)
             {
-                int da = cube->orientation_a - refc->orientation_a;
-                int db = cube->orientation_b - refc->orientation_b;
-                int dc = cube->orientation_c - refc->orientation_c;
-
-                m.orientation_delta.encode(coder, da);
-                m.orientation_delta.encode(coder, db);
-                m.orientation_delta.encode(coder, dc);
+                for (int i = 0; i < 3; ++i)
+                    m.orientation_delta.encode(coder, cube->orientation[i] - refc->orientation[i]);
             }
             else
             {
-                m.orientation_val.encode(coder, cube->orientation_a - 256);
-                m.orientation_val.encode(coder, cube->orientation_b - 256);
-                m.orientation_val.encode(coder, cube->orientation_c - 256);
+#ifdef NEW_DELTA_QUAT
+                int old_largest = refc->orientation_largest;
+                int new_largest = cube->orientation_largest;
+                int old[4];
+                unpack_quat_prediction(old, refc->orientation, old_largest);
+
+                int sign_context = old[new_largest] < 256;
+                if (cube->orientation[abc_from_xyzw(old_largest, new_largest)] < 256)
+                {
+                    m.orientation_signflip[sign_context].encode(coder, 1);
+                    for (int i = 0; i < 4; ++i)
+                        old[i] = 512 - old[i];
+                }
+                else
+                    m.orientation_signflip[sign_context].encode(coder, 0);
+
+                for (int i = 0; i < 3; ++i)
+                    m.orientation_val.encode(coder, cube->orientation[i] - old[xyzw_from_abc(i, new_largest)]);
+#else
+                for (int i = 0; i < 3; ++i)
+                    m.orientation_val.encode(coder, cube->orientation[i] - 256);
+#endif
             }
         }
         else
@@ -454,26 +513,40 @@ static void decode_frame(ByteVec const &src, Frame *cur, Frame const *ref)
         if (m.orientation_different[refp->changing].decode(coder))
         {
             diff_orient = true;
-            cube->orientation_largest = (int) m.orientation_largest[refc->orientation_largest].decode(coder);
+            int second = orient_context(refc);
+            cube->orientation_largest = (int) m.orientation_largest[refc->orientation_largest][second].decode(coder);
             if (cube->orientation_largest == refc->orientation_largest)
             {
-                cube->orientation_a = refc->orientation_a + m.orientation_delta.decode(coder);
-                cube->orientation_b = refc->orientation_b + m.orientation_delta.decode(coder);
-                cube->orientation_c = refc->orientation_c + m.orientation_delta.decode(coder);
+                for (int i = 0; i < 3; ++i)
+                    cube->orientation[i] = refc->orientation[i] + m.orientation_delta.decode(coder);
             }
             else
             {
-                cube->orientation_a = m.orientation_val.decode(coder) + 256;
-                cube->orientation_b = m.orientation_val.decode(coder) + 256;
-                cube->orientation_c = m.orientation_val.decode(coder) + 256;
+#ifdef NEW_DELTA_QUAT
+                int old_largest = refc->orientation_largest;
+                int new_largest = cube->orientation_largest;
+                int old[4];
+                unpack_quat_prediction(old, refc->orientation, old_largest);
+
+                if (m.orientation_signflip[old[new_largest] < 256].decode(coder))
+                {
+                    for (int i = 0; i < 4; ++i)
+                        old[i] = 512 - old[i];
+                }
+
+                for (int i = 0; i < 3; ++i)
+                    cube->orientation[i] = m.orientation_val.decode(coder) + old[xyzw_from_abc(i, new_largest)];
+#else
+                for (int i = 0; i < 3; ++i)
+                    cube->orientation[i] = m.orientation_val.decode(coder) + 256;
+#endif
             }
         }
         else
         {
             cube->orientation_largest = refc->orientation_largest;
-            cube->orientation_a = refc->orientation_a;
-            cube->orientation_b = refc->orientation_b;
-            cube->orientation_c = refc->orientation_c;
+            for (int i = 0; i < 3; ++i)
+                cube->orientation[i] = refc->orientation[i];
         }
 
         int dx = 0, dy = 0, dz = 0;
