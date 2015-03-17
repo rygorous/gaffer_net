@@ -443,10 +443,10 @@ static int mag_context(int dv)
 
 static int orient_newmag_context(int axis, int old_largest, PredState const *refp)
 {
-    int ctx = ModelSet::kNumMagCtx;
     if (axis != old_largest)
-        ctx = mag_context(refp->orient_delta[abc_from_xyzw(axis, old_largest)]);
-    return ctx;
+        return mag_context(refp->orient_delta[abc_from_xyzw(axis, old_largest)]);
+    else
+        return ModelSet::kNumMagCtx;
 }
 
 static void unpack_quat_prediction(int dest[4], int const src[3], int largest)
