@@ -276,7 +276,10 @@ struct BitTreeModel
 template<typename MagModel>
 struct UExpGolombModel
 {
+    static size_t const kMaxTop = 7;
+
     BitTreeModel<MagModel, 5> mag;
+    MagModel top[kMaxTop + 1];
 
     void encode(BinArithEncoder &enc, uint32_t value)
     {
@@ -292,11 +295,18 @@ struct UExpGolombModel
 
         // send remaining bits flat, MSB->LSB
         uint32_t mask = m ? 1u << (m - 1) : 0;
-        while (mask)
+        if (mask)
         {
-            uint32_t bit = (value & mask) != 0;
-            enc.encode(bit, kProbMax / 2);
+            uint32_t mtop = (m < kMaxTop) ? m : kMaxTop;
+            top[mtop].encode(enc, (value & mask) != 0);
+
             mask >>= 1;
+            while (mask)
+            {
+                uint32_t bit = (value & mask) != 0;
+                enc.encode(bit, kProbMax / 2);
+                mask >>= 1;
+            }
         }
     }
 
@@ -307,8 +317,13 @@ struct UExpGolombModel
 
         // decode value bits
         uint32_t v = 1;
-        for (uint32_t i = 0; i < m; ++i)
-            v += v + dec.decode(kProbMax / 2);
+        if (m)
+        {
+            uint32_t mtop = (m < kMaxTop) ? m : kMaxTop;
+            v += v + top[mtop].decode(dec);
+            for (uint32_t i = 1; i < m; ++i)
+                v += v + dec.decode(kProbMax / 2);
+        }
 
         return v - 1;
     }
